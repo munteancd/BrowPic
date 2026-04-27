@@ -1,12 +1,14 @@
 """URL → media-list extractors."""
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse, urljoin
 
 import httpx
+from bs4 import BeautifulSoup
 
 from .media import FoundMedia, MediaKind, kind_from_url
 
@@ -139,3 +141,131 @@ _EXTERNAL_HOST_RE = re.compile(
 
 def _looks_like_external_gallery(url: str) -> bool:
     return bool(_EXTERNAL_HOST_RE.match(url))
+
+
+# ---------- external gallery resolvers ----------
+
+EXTERNAL_GALLERY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^https?://(?:www\.|m\.)?imgur\.com/(?:a|gallery)/([A-Za-z0-9]+)"), "imgur_album"),
+    (re.compile(r"^https?://(?:www\.|m\.)?imgur\.com/([A-Za-z0-9]+)$"), "imgur_single"),
+    (re.compile(r"^https?://(?:www\.)?redgifs\.com/watch/([A-Za-z0-9]+)"), "redgifs"),
+]
+
+
+async def resolve_external_gallery(url: str) -> list[FoundMedia]:
+    for pattern, kind in EXTERNAL_GALLERY_PATTERNS:
+        m = pattern.match(url)
+        if not m:
+            continue
+        try:
+            if kind == "imgur_album":
+                return await _resolve_imgur_album(url)
+            if kind == "imgur_single":
+                return await _resolve_imgur_single(url)
+            if kind == "redgifs":
+                return await _resolve_redgifs(m.group(1))
+        except Exception:
+            return []
+    return []
+
+
+async def _fetch_text(url: str) -> str:
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT},
+                                  follow_redirects=True, timeout=20) as c:
+        r = await c.get(url)
+        r.raise_for_status()
+        return r.text
+
+
+async def _resolve_imgur_album(url: str) -> list[FoundMedia]:
+    html = await _fetch_text(url)
+    media: list[FoundMedia] = []
+    obj = None
+    key_match = re.search(r"album_images\s*\"\s*:\s*\{", html, re.S)
+    if key_match:
+        start = key_match.end() - 1  # position of '{'
+        depth = 0
+        end = -1
+        in_str = False
+        esc = False
+        for i in range(start, len(html)):
+            ch = html[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            else:
+                if ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+        if end != -1:
+            try:
+                obj = json.loads(html[start:end + 1])
+            except Exception:
+                obj = None
+    if obj is not None:
+        try:
+            for img in obj.get("images", []):
+                ext = img.get("ext", ".jpg")
+                u = f"https://i.imgur.com/{img['hash']}{ext}"
+                media.append(FoundMedia(
+                    url=u, kind=kind_from_url(u), data=None, cache_path=None,
+                    width=int(img.get("width", 0)), height=int(img.get("height", 0)),
+                    source_url=url, is_external=True,
+                ))
+        except Exception:
+            pass
+    if media:
+        return media
+    soup = BeautifulSoup(html, "html.parser")
+    og = soup.find("meta", property="og:image")
+    if og and og.get("content"):
+        u = og["content"]
+        media.append(FoundMedia(
+            url=u, kind=kind_from_url(u), data=None, cache_path=None,
+            width=0, height=0, source_url=url, is_external=True,
+        ))
+    return media
+
+
+async def _resolve_imgur_single(url: str) -> list[FoundMedia]:
+    html = await _fetch_text(url)
+    soup = BeautifulSoup(html, "html.parser")
+    og = soup.find("meta", property="og:image")
+    if og and og.get("content"):
+        u = og["content"]
+        return [FoundMedia(
+            url=u, kind=kind_from_url(u), data=None, cache_path=None,
+            width=0, height=0, source_url=url, is_external=True,
+        )]
+    return []
+
+
+async def _resolve_redgifs(gif_id: str) -> list[FoundMedia]:
+    api = f"https://api.redgifs.com/v2/gifs/{gif_id}"
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT},
+                                  follow_redirects=True, timeout=20) as c:
+        r = await c.get(api)
+        r.raise_for_status()
+        obj = r.json()
+    g = obj.get("gif") or {}
+    urls = g.get("urls") or {}
+    u = urls.get("hd") or urls.get("sd")
+    if not u:
+        return []
+    return [FoundMedia(
+        url=u, kind=MediaKind.VIDEO, data=None, cache_path=None,
+        width=int(g.get("width", 0)), height=int(g.get("height", 0)),
+        duration_s=float(g.get("duration", 0)),
+        source_url=f"https://www.redgifs.com/watch/{gif_id}",
+        is_external=True,
+    )]
