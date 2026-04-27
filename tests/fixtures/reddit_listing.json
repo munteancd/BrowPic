@@ -1,0 +1,23 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_aaaaaa",
+    "children": [
+      {"kind": "t3", "data": {
+        "name": "t3_111111", "post_hint": "image",
+        "url_overridden_by_dest": "https://i.redd.it/abc.jpg",
+        "url": "https://i.redd.it/abc.jpg",
+        "preview": {"images": [{"source": {"url": "https://preview.redd.it/abc.jpg?w=1920", "width": 1920, "height": 1080}}]}
+      }},
+      {"kind": "t3", "data": {
+        "name": "t3_222222",
+        "is_video": true,
+        "media": {"reddit_video": {"fallback_url": "https://v.redd.it/xyz/DASH_720.mp4?source=fallback", "width": 1280, "height": 720, "duration": 15}}
+      }},
+      {"kind": "t3", "data": {
+        "name": "t3_333333",
+        "url": "https://imgur.com/a/abcDEF"
+      }}
+    ]
+  }
+}

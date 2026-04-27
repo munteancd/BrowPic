@@ -1,0 +1,16 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": null,
+    "children": [
+      {"kind": "t3", "data": {
+        "name": "t3_gal01",
+        "is_gallery": true,
+        "media_metadata": {
+          "img1": {"s": {"u": "https://preview.redd.it/img1.jpg?w=2400&amp;auto=webp", "x": 2400, "y": 1600}},
+          "img2": {"s": {"u": "https://preview.redd.it/img2.jpg?w=2400&amp;auto=webp", "x": 2400, "y": 1600}}
+        }
+      }}
+    ]
+  }
+}
