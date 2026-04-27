@@ -93,7 +93,7 @@ async def extract_reddit(
                 if isinstance(rv, dict) and rv.get("fallback_url"):
                     add(rv["fallback_url"], MediaKind.VIDEO,
                         w=rv.get("width", 0), h=rv.get("height", 0),
-                        dur=float(rv.get("duration", 0)))
+                        dur=float(rv.get("duration") or 0))
                 gallery = d.get("media_metadata")
                 if isinstance(gallery, dict):
                     for m in gallery.values():
