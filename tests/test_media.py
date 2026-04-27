@@ -39,3 +39,13 @@ def test_bytes_or_path_writes_temp_when_data_only(tmp_path, monkeypatch):
     out = m.bytes_or_path()
     assert out.exists()
     assert out.read_bytes() == b"img-bytes"
+
+
+def test_bytes_or_path_idempotent(tmp_path, monkeypatch):
+    from browpic import media as media_mod
+    monkeypatch.setattr(media_mod, "CACHE_DIR", tmp_path)
+    m = FoundMedia(url="https://x.com/a.jpg", kind=MediaKind.IMAGE,
+                   data=b"abc", cache_path=None, width=1, height=1)
+    p1 = m.bytes_or_path()
+    p2 = m.bytes_or_path()
+    assert p1 == p2 == m.cache_path

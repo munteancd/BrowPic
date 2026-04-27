@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 CACHE_DIR = Path.home() / ".browpic_cache" / "media"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class MediaKind(str, Enum):
@@ -55,11 +54,13 @@ class FoundMedia:
         """Return a Path that QPixmap/QMovie/QMediaPlayer can read."""
         if self.cache_path is not None:
             return self.cache_path
-        assert self.data is not None, "media has neither data nor cache_path"
+        if self.data is None:
+            raise ValueError("FoundMedia has neither data nor cache_path")
         ext = _safe_ext(self.url, ".bin")
         h = hashlib.sha1(self.url.encode()).hexdigest()[:16]
         out = CACHE_DIR / f"tmp_{h}{ext}"
         if not out.exists():
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
             out.write_bytes(self.data)
         self.cache_path = out
         return out
