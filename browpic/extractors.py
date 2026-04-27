@@ -269,3 +269,120 @@ async def _resolve_redgifs(gif_id: str) -> list[FoundMedia]:
         source_url=f"https://www.redgifs.com/watch/{gif_id}",
         is_external=True,
     )]
+
+
+# ---------- Generic (Playwright) extractor ----------
+
+async def extract_generic(
+    url: str,
+    context,  # playwright.async_api.BrowserContext
+    cursor: Optional[PlaywrightScrollCursor] = None,
+    scroll_chunks: int = 8,
+) -> tuple[list[FoundMedia], Optional[PlaywrightScrollCursor]]:
+    """Render the page in `context` and extract image/video URLs.
+
+    If `cursor` is provided, reuses the existing tab and continues scrolling
+    from `scroll_y`; otherwise opens a new page and starts at the top.
+    """
+    pages = context.pages
+    page = pages[0] if pages and cursor else await context.new_page()
+
+    media_urls: dict[str, MediaKind] = {}
+
+    def add(u: Optional[str], k: MediaKind = MediaKind.IMAGE):
+        if not u or u.startswith("data:"):
+            return
+        media_urls.setdefault(u, k)
+
+    def on_response(resp):
+        try:
+            ct = resp.headers.get("content-type", "")
+            if ct.startswith("image/"):
+                add(resp.url, kind_from_url(resp.url))
+            elif ct.startswith("video/"):
+                add(resp.url, MediaKind.VIDEO)
+        except Exception:
+            pass
+
+    if cursor is None:
+        page.on("response", on_response)
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        start_y = 0
+    else:
+        start_y = cursor.scroll_y
+
+    new_y = start_y
+    for _ in range(scroll_chunks):
+        await page.evaluate(f"window.scrollTo(0, {new_y})")
+        await page.wait_for_timeout(400)
+        new_y = await page.evaluate("window.scrollY + window.innerHeight")
+
+    base = page.url
+    html = await page.content()
+
+    for img in await page.query_selector_all("img"):
+        for attr in ("src", "data-src", "data-original", "data-lazy-src"):
+            v = await img.get_attribute(attr)
+            if v:
+                add(urljoin(base, v), kind_from_url(v))
+        srcset = await img.get_attribute("srcset")
+        if srcset:
+            parts = [p.strip() for p in srcset.split(",") if p.strip()]
+            if parts:
+                last = parts[-1].split()[0]
+                add(urljoin(base, last), kind_from_url(last))
+
+    for vid in await page.query_selector_all("video"):
+        v = await vid.get_attribute("src")
+        if v:
+            add(urljoin(base, v), MediaKind.VIDEO)
+        for src_el in await vid.query_selector_all("source"):
+            v = await src_el.get_attribute("src")
+            if v:
+                add(urljoin(base, v), MediaKind.VIDEO)
+
+    soup = BeautifulSoup(html, "html.parser")
+    for el in soup.find_all(style=True):
+        style = el.get("style") or ""
+        for m in re.finditer(r"url\(['\"]?([^'\")]+)['\"]?\)", style):
+            add(urljoin(base, m.group(1)), kind_from_url(m.group(1)))
+
+    end_y = await page.evaluate("window.scrollY")
+    page_height = await page.evaluate("document.body.scrollHeight")
+    progressed = end_y > start_y + 200
+    at_bottom = end_y + 100 >= page_height
+    next_cursor = (
+        PlaywrightScrollCursor(scroll_y=end_y, seen_count=len(media_urls))
+        if progressed and not at_bottom
+        else None
+    )
+
+    out = [
+        FoundMedia(
+            url=u, kind=k, data=None, cache_path=None,
+            width=0, height=0, source_url=url,
+        )
+        for u, k in media_urls.items()
+    ]
+    return out, next_cursor
+
+
+async def extract_external_links(html: str, base_url: str) -> list[str]:
+    """Find href attributes in HTML that match external gallery patterns."""
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[str] = []
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        u = urljoin(base_url, a["href"])
+        if u in seen:
+            continue
+        for pattern, _ in EXTERNAL_GALLERY_PATTERNS:
+            if pattern.match(u):
+                seen.add(u)
+                out.append(u)
+                break
+    return out
