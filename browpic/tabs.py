@@ -159,6 +159,20 @@ class GalleryTab(QWidget):
                 self.seen_urls.add(m.url)
                 new.append(m)
             self.paginator = cursor
+            # If the extractor returned nothing on the *first* page, the
+            # site likely blocked us (captcha, anti-bot wall) or the URL
+            # has no images at all. Surface a clear message instead of a
+            # silent empty grid. Continuation pages (initial=False) can
+            # legitimately return 0 new items when the user reaches the
+            # end of a feed, so we only warn on the first fetch.
+            if initial and not new and self.kind == SourceKind.GENERIC:
+                self.status_message.emit(
+                    "Niciun media găsit. Site-ul poate bloca browser-ele "
+                    "automate (ex: Google Images). Încearcă Bing Images, "
+                    "DuckDuckGo Images sau un alt site."
+                )
+            elif initial and not new:
+                self.status_message.emit("Niciun media găsit la acest URL.")
             self._start_download(new)
             if self.follow_chk.isChecked():
                 self._fan_out_external(new)

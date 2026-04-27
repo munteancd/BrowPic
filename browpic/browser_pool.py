@@ -11,7 +11,13 @@ import time
 from concurrent.futures import Future
 from typing import Optional
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BrowPic/2.0"
+# Use a current Chrome UA so sites don't immediately serve the "browser
+# upgrade" page or trigger soft bot heuristics. This is paired with
+# playwright-stealth (applied per-context) to mask common headless tells.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class BrowserPool:
@@ -38,6 +44,19 @@ class BrowserPool:
                 self._tabs[tab_id] = (ctx, time.monotonic())
                 return ctx
             ctx = await self._browser.new_context(user_agent=USER_AGENT)
+            # Apply stealth patches that mask navigator.webdriver, plugins,
+            # WebGL vendor strings, etc. Many sites (Bing, Pinterest,
+            # Twitter, most blogs) are happy with this. Google specifically
+            # uses additional fingerprinting and will still serve a captcha
+            # in headless mode — there is no fix for that short of running
+            # the browser visibly, which we do not do here.
+            try:
+                from playwright_stealth import Stealth
+                await Stealth().apply_stealth_async(ctx)
+            except Exception:
+                # Stealth is a best-effort enhancement; never fail extraction
+                # because it could not be applied.
+                pass
             self._tabs[tab_id] = (ctx, time.monotonic())
             return ctx
 
