@@ -253,12 +253,58 @@ class Viewer(QDialog):
             self.advance_timer.start(ms)
 
     def _play_video(self, m: FoundMedia):
-        # Implemented in Task 9
-        pass
+        from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+        from PySide6.QtMultimediaWidgets import QVideoWidget
+
+        self._stop_video()
+
+        self.view.hide()
+        if self._video_widget is None:
+            self._video_widget = QVideoWidget(self)
+            self._video_widget.setStyleSheet("background: #111;")
+            self.layout().insertWidget(0, self._video_widget, 1)
+        self._video_widget.show()
+
+        player = QMediaPlayer(self)
+        audio = QAudioOutput(self)
+        audio.setMuted(True)
+        player.setAudioOutput(audio)
+        player.setVideoOutput(self._video_widget)
+        player.setSource(QUrl.fromLocalFile(str(m.bytes_or_path())))
+
+        def on_status(status):
+            from PySide6.QtMultimedia import QMediaPlayer as QMP
+            if status == QMP.MediaStatus.EndOfMedia and self.slideshow_active:
+                self.next()
+        player.mediaStatusChanged.connect(on_status)
+
+        cap_ms = self.video_max_s * 1000
+        self._video_cap_timer = QTimer(self)
+        self._video_cap_timer.setSingleShot(True)
+        self._video_cap_timer.timeout.connect(
+            lambda: self.next() if self.slideshow_active else None
+        )
+        if self.slideshow_active:
+            self._video_cap_timer.start(cap_ms)
+
+        player.play()
+        self._media_player = player
+        self._video_audio = audio
 
     def _stop_video(self):
-        # Implemented in Task 9
-        pass
+        if self._media_player is not None:
+            try:
+                self._media_player.stop()
+                self._media_player.deleteLater()
+            except Exception:
+                pass
+            self._media_player = None
+        if getattr(self, "_video_cap_timer", None) is not None:
+            self._video_cap_timer.stop()
+            self._video_cap_timer = None
+        if self._video_widget is not None:
+            self._video_widget.hide()
+        self.view.show()
 
     def save_current(self):
         if not self.media:
