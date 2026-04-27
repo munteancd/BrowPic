@@ -59,6 +59,9 @@ class GalleryTab(QWidget):
     title_changed = Signal(str)
     request_open_viewer = Signal(int)
     status_message = Signal(str)
+    # Cross-thread marshaller: emit a callable from any thread, it runs on the
+    # GUI thread because the signal is connected via a queued connection.
+    _marshal = Signal(object)
 
     def __init__(self, source_url: str, runner, browser_pool, settings: dict, parent=None):
         super().__init__(parent)
@@ -72,6 +75,10 @@ class GalleryTab(QWidget):
         self.paginator = None
         self.status = TabStatus.IDLE
         self.tab_id = f"tab_{id(self)}"
+        # The marshaller is owned by `self` (a QObject living on the GUI
+        # thread); emitting from a worker thread queues the call onto the
+        # GUI thread's event loop.
+        self._marshal.connect(lambda fn: fn())
 
         self.list = QListWidget(viewMode=QListWidget.IconMode)
         self.list.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
@@ -159,8 +166,10 @@ class GalleryTab(QWidget):
         fut.add_done_callback(lambda f: self._post(lambda: on_done(f)))
 
     def _post(self, fn):
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, fn)
+        # Marshal `fn` from a worker thread to the GUI thread via a queued
+        # signal connection. Using QTimer.singleShot does not work here
+        # because the calling thread (AsyncRunner) has no Qt event loop.
+        self._marshal.emit(fn)
 
     def _start_download(self, media: list[FoundMedia]):
         from .downloader import DownloadWorker
